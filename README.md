@@ -14,5 +14,6 @@
 1. Double-click boards\evkmcimx7ulp\demo_apps\rohm_power_mode_switch\iar\power_mode_switch.eww
 2. Build
 3. Copy boards\evkmcimx7ulp\demo_apps\rohm_power_mode_switch\iar\debug\sdk20-app.bin to tools\imgutil\evkmcimx7ulp\
-4. Run `..\bin\imgutil.exe --combine base_addr=0x1FFD0000 ivt_offset=0x1000 config_offset=0x400 config_file=qcb.bin app_offset=0x2000 app_file=sdk20-app.bin ofile=sdk20-app.img`
-5. Copy sdk20-app.img to the folder with uuu to flash it
+4. Open a Command Prompt and go to tools\imgutil\evkmcimx7ulp\
+5. Run `..\bin\imgutil.exe --combine base_addr=0x1FFD0000 ivt_offset=0x1000 config_offset=0x400 config_file=qcb.bin app_offset=0x2000 app_file=sdk20-app.bin ofile=sdk20-app.img`
+6. Copy sdk20-app.img to the folder with uuu to flash it
