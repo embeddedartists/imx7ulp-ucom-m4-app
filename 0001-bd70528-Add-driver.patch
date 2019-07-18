@@ -1,0 +1,723 @@
+From 5e02f34b7408420a4c3d278394e67cc2737fa707 Mon Sep 17 00:00:00 2001
+From: Vanessa Maegima <vanessa.maegima@nxp.com>
+Date: Tue, 16 Jul 2019 12:16:37 -0300
+Subject: [PATCH 1/2] bd70528: Add driver
+
+Signed-off-by: Vanessa Maegima <vanessa.maegima@nxp.com>
+---
+ components/bd70528/bd70528.c | 431 +++++++++++++++++++++++++++++++++++
+ components/bd70528/bd70528.h | 264 +++++++++++++++++++++
+ 2 files changed, 695 insertions(+)
+ create mode 100644 components/bd70528/bd70528.c
+ create mode 100644 components/bd70528/bd70528.h
+
+diff --git a/components/bd70528/bd70528.c b/components/bd70528/bd70528.c
+new file mode 100644
+index 0000000..fc4d273
+--- /dev/null
++++ b/components/bd70528/bd70528.c
+@@ -0,0 +1,431 @@
++/*
++ * Copyright 2019 NXP
++ * All rights reserved.
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++#include "fsl_common.h"
++#include "bd70528.h"
++
++#include "fsl_debug_console.h"
++
++/*******************************************************************************
++ * Definitions
++ ******************************************************************************/
++/* REGULATOR_CTRL bit-field. */
++#define BD70528_REGULATOR_IDLE_MASK		(0x01U)
++#define BD70528_REGULATOR_STBY_MASK		(0x02U)
++#define BD70528_REGULATOR_ON_MASK		(0x04U)
++#define BD70528_REGULATOR_IDLE_ULP_MASK	(0x10U)
++#define BD70528_REGULATOR_STBY_ULP_MASK	(0x20U)
++#define BD70528_REGULATOR_ON_ULP_MASK	(0x40U)
++#define BD70528_REGULATOR_LP_MASK		(0x10U)
++
++/*******************************************************************************
++ * Prototypes
++ ******************************************************************************/
++
++/*******************************************************************************
++ * Variables
++ ******************************************************************************/
++static const uint8_t regulatorCtrlRegTab[] = {
++    BD70528_BUCK1_EN_CONF, BD70528_BUCK2_EN_CONF, BD70528_BUCK3_EN_CONF,
++    BD70528_LDO1_EN_CONF, BD70528_LDO2_EN_CONF, BD70528_LDO3_EN_CONF,
++};
++
++static const uint8_t regulatorVoltRegTab[] = {
++	BD70528_BUCK1_VOLT_CONF, BD70528_BUCK2_VOLT_CONF, BD70528_BUCK3_VOLT_CONF,
++	BD70528_LDO1_VOLT_CONF, BD70528_LDO2_VOLT_CONF, BD70528_LDO3_VOLT_CONF,
++};
++
++/* Voltage Ranges */
++static const unsigned int buck1[] = {1200000, 1800000, 2750000, 2800000,
++                            2850000, 2900000, 2950000, 3000000,
++                            3050000, 3100000, 3150000, 3200000,
++                            3250000, 3300000, 3350000, 3400000};
++
++static const unsigned int buck2[] = {1200000, 1500000, 1550000, 1600000,
++                            1650000, 1700000, 1750000, 1800000,
++                            1850000, 1900000, 1950000, 2000000,
++                            2050000, 2100000, 3000000, 3300000};
++
++static const unsigned int buck3[] = { 800000,  850000,  900000,  950000,
++                            1000000, 1050000, 1100000, 1150000,
++                            1200000, 1250000, 1300000, 1350000,
++                            1400000, 1450000, 1800000, 1800000};
++
++static const unsigned int ldo[] = {1650000, 1700000, 1750000, 1800000, 1850000, 1900000,
++						1950000, 2000000, 2100000, 2200000, 2300000, 2400000,
++						2500000, 2600000, 2700000, 2800000, 2850000, 2900000,
++						2950000, 3000000, 3050000, 3100000, 3150000, 3200000,
++						3250000, 3300000};
++
++/*******************************************************************************
++ * Code
++ ******************************************************************************/
++
++void BD70528_GetDefaultConfig(bd70528_config_t *config)
++{
++    assert(config);
++
++    config->I2C_SendFunc = NULL;
++    config->I2C_ReceiveFunc = NULL;
++
++    config->slaveAddress = BD70528_DEFAULT_I2C_ADDR;
++}
++
++void BD70528_Init(bd70528_handle_t *handle, const bd70528_config_t *config)
++{
++    assert(handle);
++    assert(config);
++
++    /* Initialize Callback functions. */
++    handle->I2C_SendFunc = config->I2C_SendFunc;
++    handle->I2C_ReceiveFunc = config->I2C_ReceiveFunc;
++    /* Set Slave Address. */
++    handle->slaveAddress = config->slaveAddress;
++}
++
++bool BD70528_ReadReg(bd70528_handle_t *handle, uint8_t reg, uint8_t *val)
++{
++    assert(handle);
++    assert(handle->I2C_ReceiveFunc);
++    assert(val);
++
++    return (kStatus_Success == handle->I2C_ReceiveFunc(handle->slaveAddress, reg, 1U, val, 1U)) ? true : false;
++}
++
++bool BD70528_WriteReg(bd70528_handle_t *handle, uint8_t reg, uint8_t val)
++{
++    assert(handle);
++    assert(handle->I2C_SendFunc);
++
++    return (kStatus_Success == handle->I2C_SendFunc(handle->slaveAddress, reg, 1U, &val, 1U)) ? true : false;
++}
++
++bool BD70528_ModifyReg(bd70528_handle_t *handle, uint8_t reg, uint8_t mask, uint8_t val)
++{
++    bool result = false;
++    uint8_t regValue;
++
++    assert(handle);
++
++    /* Read back the register content. */
++    result = BD70528_ReadReg(handle, reg, &regValue);
++    if (true == result)
++    {
++        /* Modify the bit-fields you want to change. */
++        regValue &= (uint8_t)~mask;
++        regValue |= val;
++
++        /* Write back the content to the registers. */
++        result = BD70528_WriteReg(handle, reg, regValue);
++    }
++
++    return result;
++}
++
++void BD70528_EnableRegulator(bd70528_handle_t *handle, bd70528_module_t module,
++            bd70528_operating_status_t status, bool enable)
++{
++    uint8_t regulatorCtrlRegAddr;
++
++    assert(handle);
++    /* Regulators are only enabled in any of the System On Statues. */
++    assert((kBD70528_OperatingStatusIdle == status) ||
++           (kBD70528_OperatingStatusStby == status) ||
++           (kBD70528_OperatingStatusOn == status) ||
++           (kBD70528_OperatingStatusIdleULP == status) ||
++           (kBD70528_OperatingStatusStbyULP == status) ||
++           (kBD70528_OperatingStatusOnULP == status) ||
++           (kBD70528_OperatingStatusLP == status));
++
++    /* Get Regulator Control Register Address. */
++    regulatorCtrlRegAddr = regulatorCtrlRegTab[module];
++
++    /*switch (status)
++    {
++        case kBD70528_OperatingStatusIdle:
++            BD70528_ModifyReg(handle, regulatorCtrlRegAddr, BD70528_REGULATOR_IDLE_MASK,
++                   (enable ? BD70528_REGULATOR_IDLE_MASK : 0x0U));
++            break;
++
++        case kBD70528_OperatingStatusStby:
++            BD70528_ModifyReg(handle, regulatorCtrlRegAddr, BD70528_REGULATOR_STBY_MASK,
++                   (enable ? BD70528_REGULATOR_STBY_MASK : 0x0U));
++            break;
++
++        case kBD70528_OperatingStatusOn:
++            BD70528_ModifyReg(handle, regulatorCtrlRegAddr, BD70528_REGULATOR_ON_MASK,
++                   (enable ? BD70528_REGULATOR_ON_MASK : 0x0U));
++            break;
++
++        case kBD70528_OperatingStatusIdleULP:
++            if ((regulatorCtrlRegAddr == BD70528_LDO1_EN_CONF) ||
++				(regulatorCtrlRegAddr == BD70528_LDO2_EN_CONF) ||
++				(regulatorCtrlRegAddr == BD70528_LDO3_EN_CONF)) {
++				PRINTF("Operation not permitted - for Buck only\n\r");
++				break;
++			}
++            BD70528_ModifyReg(handle, regulatorCtrlRegAddr, BD70528_REGULATOR_IDLE_ULP_MASK,
++                   (enable ? BD70528_REGULATOR_IDLE_ULP_MASK : 0x0U));
++            break;
++
++        case kBD70528_OperatingStatusStbyULP:
++            if ((regulatorCtrlRegAddr == BD70528_LDO1_EN_CONF) ||
++				(regulatorCtrlRegAddr == BD70528_LDO2_EN_CONF) ||
++				(regulatorCtrlRegAddr == BD70528_LDO3_EN_CONF)) {
++				PRINTF("Operation not permitted - for Buck only\n\r");
++				break;
++			}
++            BD70528_ModifyReg(handle, regulatorCtrlRegAddr, BD70528_REGULATOR_STBY_ULP_MASK,
++                   (enable ? BD70528_REGULATOR_STBY_ULP_MASK : 0x0U));
++            break;
++
++        case kBD70528_OperatingStatusOnULP:
++            if ((regulatorCtrlRegAddr == BD70528_LDO1_EN_CONF) ||
++				(regulatorCtrlRegAddr == BD70528_LDO2_EN_CONF) ||
++				(regulatorCtrlRegAddr == BD70528_LDO3_EN_CONF)) {
++				PRINTF("Operation not permitted - for Buck only\n\r");
++				break;
++			}
++            BD70528_ModifyReg(handle, regulatorCtrlRegAddr, BD70528_REGULATOR_ON_ULP_MASK,
++                   (enable ? BD70528_REGULATOR_ON_ULP_MASK : 0x0U));
++            break;
++
++        case kBD70528_OperatingStatusLP:
++			if ((regulatorCtrlRegAddr == BD70528_BUCK1_EN_CONF) ||
++				(regulatorCtrlRegAddr == BD70528_BUCK2_EN_CONF) ||
++				(regulatorCtrlRegAddr == BD70528_BUCK3_EN_CONF)) {
++				PRINTF("Operation not permitted - for LDO only\n\r");
++				break;
++			}
++            BD70528_ModifyReg(handle, regulatorCtrlRegAddr, BD70528_REGULATOR_LP_MASK,
++                   (enable ? BD70528_REGULATOR_LP_MASK : 0x0U));
++            break;
++
++        default:
++            break;
++    }*/
++}
++
++bool BD70528_IsRegulatorEnabled(bd70528_handle_t *handle, bd70528_module_t module,
++            bd70528_operating_status_t status)
++{
++    bool result;
++    uint8_t regulatorCtrlRegAddr;
++    uint8_t regulatorCtrlRegContent;
++
++    assert(handle);
++    /* Regulators are only enabled in any of the System On Statues. */
++    assert((kBD70528_OperatingStatusIdle == status) ||
++           (kBD70528_OperatingStatusStby == status) ||
++           (kBD70528_OperatingStatusOn == status) ||
++           (kBD70528_OperatingStatusIdleULP == status) ||
++           (kBD70528_OperatingStatusStbyULP == status) ||
++           (kBD70528_OperatingStatusOnULP == status) ||
++           (kBD70528_OperatingStatusLP == status));
++
++    /* Get Regulator Control Register Content. */
++    regulatorCtrlRegAddr = regulatorCtrlRegTab[module];
++    BD70528_ReadReg(handle, regulatorCtrlRegAddr, &regulatorCtrlRegContent);
++
++    switch (status)
++    {
++        case kBD70528_OperatingStatusIdle:
++            result = (regulatorCtrlRegContent & BD70528_REGULATOR_IDLE_MASK) ?
++                      true : false;
++            break;
++
++        case kBD70528_OperatingStatusStby:
++            result = (regulatorCtrlRegContent & BD70528_REGULATOR_STBY_MASK) ?
++                      true : false;
++            break;
++
++        case kBD70528_OperatingStatusOn:
++            result = (regulatorCtrlRegContent & BD70528_REGULATOR_ON_MASK) ?
++                      true : false;
++            break;
++
++        case kBD70528_OperatingStatusIdleULP:
++            result = (regulatorCtrlRegContent & BD70528_REGULATOR_IDLE_ULP_MASK) ?
++					  true : false;
++            break;
++
++        case kBD70528_OperatingStatusStbyULP:
++            result = (regulatorCtrlRegContent & BD70528_REGULATOR_STBY_ULP_MASK) ?
++					  true : false;
++            break;
++
++        case kBD70528_OperatingStatusOnULP:
++            result = (regulatorCtrlRegContent & BD70528_REGULATOR_ON_ULP_MASK) ?
++					  true : false;
++            break;
++
++        case kBD70528_OperatingStatusLP:
++            result = (regulatorCtrlRegContent & BD70528_REGULATOR_LP_MASK) ?
++					  true : false;
++            break;
++
++        default:
++            result = false;
++            break;
++    }
++
++    return result;
++}
++
++static uint8_t BD70528_GetRegulatorSetPoint(bd70528_handle_t *handle,
++                      bd70528_module_t module, uint32_t voltage)
++{
++    uint8_t regulatorSetPoint = 0U;
++    uint32_t index;
++
++    assert(handle);
++    assert((kBD70528_ModuleBuck1 == module) ||
++           (kBD70528_ModuleBuck2 == module) ||
++           (kBD70528_ModuleBuck3 == module) ||
++           (kBD70528_ModuleLdo1 == module) ||
++           (kBD70528_ModuleLdo2 == module) ||
++           (kBD70528_ModuleLdo3 == module));
++
++    switch (module)
++    {
++        case kBD70528_ModuleBuck1:
++			for (index = 0; index <= 0xF; index++) {
++				if (voltage == buck1[index]) {
++					regulatorSetPoint = index;
++					break;
++				}
++				if (index == 0xF)
++					regulatorSetPoint = PMIC_ERROR_FLAG;
++			}
++			break;
++
++        case kBD70528_ModuleBuck2:
++			for (index = 0; index <= 0xF; index++) {
++				if (voltage == buck2[index]) {
++					regulatorSetPoint = index;
++					break;
++				}
++				if (index == 0xF)
++					regulatorSetPoint = PMIC_ERROR_FLAG;
++			}
++			break;
++
++        case kBD70528_ModuleBuck3:
++			for (index = 0; index <= 0xF; index++) {
++				if (voltage == buck3[index]) {
++					regulatorSetPoint = index;
++					break;
++				}
++				if (index == 0xF)
++					regulatorSetPoint = PMIC_ERROR_FLAG;
++			}
++			break;
++
++        case kBD70528_ModuleLdo1:
++        case kBD70528_ModuleLdo2:
++        case kBD70528_ModuleLdo3:
++			for (index = 0; index <= 0x19; index++) {
++				if (voltage == ldo[index]) {
++					regulatorSetPoint = index;
++					break;
++				}
++				if (index == 0x19)
++					regulatorSetPoint = PMIC_ERROR_FLAG;
++			}
++			break;
++
++        default:
++            break;
++    }
++
++    return regulatorSetPoint;
++}
++
++void BD70528_SetRegulatorOutputVoltage(bd70528_handle_t *handle, bd70528_module_t module,
++            bd70528_operating_status_t status, uint32_t voltage)
++{
++    uint8_t regulatorVoltRegAddr;
++    uint8_t regulatorVoltRegContent;
++
++    assert(handle);
++    /* Regulators are only enabled in any of the System On Statues. */
++    assert((kBD70528_OperatingStatusIdle == status) ||
++           (kBD70528_OperatingStatusStby == status) ||
++           (kBD70528_OperatingStatusOn == status) ||
++           (kBD70528_OperatingStatusIdleULP == status) ||
++           (kBD70528_OperatingStatusStbyULP == status) ||
++           (kBD70528_OperatingStatusOnULP == status) ||
++           (kBD70528_OperatingStatusLP == status));
++
++    /* Get Regulator Output Set Point. */
++    regulatorVoltRegAddr = regulatorVoltRegTab[module];
++    regulatorVoltRegContent = BD70528_GetRegulatorSetPoint(handle, module, voltage);
++
++	if (regulatorVoltRegContent == PMIC_ERROR_FLAG)
++		PRINTF("Invalid Set Point\n\r");
++	else
++		BD70528_WriteReg(handle, regulatorVoltRegAddr, regulatorVoltRegContent);
++}
++
++uint32_t BD70528_GetRegulatorOutputVoltage(bd70528_handle_t *handle,
++					bd70528_module_t module, bd70528_operating_status_t status)
++{
++    uint8_t regulatorVoltRegAddr;
++    uint8_t regulatorVoltRegContent;
++    uint32_t voltage = 0U;
++
++	assert(handle);
++	/* Regulators are only enabled in any of the System On Statues. */
++	assert((kBD70528_OperatingStatusIdle == status) ||
++	       (kBD70528_OperatingStatusStby == status) ||
++	       (kBD70528_OperatingStatusOn == status) ||
++	       (kBD70528_OperatingStatusIdleULP == status) ||
++	       (kBD70528_OperatingStatusStbyULP == status) ||
++	       (kBD70528_OperatingStatusOnULP == status) ||
++	       (kBD70528_OperatingStatusLP == status));
++
++    /* Get Regulator Output Set Point. */
++    regulatorVoltRegAddr = regulatorVoltRegTab[module];
++	BD70528_ReadReg(handle, regulatorVoltRegAddr, &regulatorVoltRegContent);
++
++    switch (module)
++    {
++        case kBD70528_ModuleBuck1:
++			regulatorVoltRegContent &= 0xF;
++			voltage = buck1[regulatorVoltRegContent];
++			break;
++
++        case kBD70528_ModuleBuck2:
++			regulatorVoltRegContent &= 0xF;
++			voltage = buck2[regulatorVoltRegContent];
++			break;
++
++        case kBD70528_ModuleBuck3:
++			regulatorVoltRegContent &= 0xF;
++			voltage = buck3[regulatorVoltRegContent];
++			break;
++
++        case kBD70528_ModuleLdo1:
++        case kBD70528_ModuleLdo2:
++        case kBD70528_ModuleLdo3:
++			regulatorVoltRegContent &= 0x1F;
++			if (regulatorVoltRegContent >= 0x19)
++				voltage = ldo[0x19];
++			else
++				voltage = ldo[regulatorVoltRegContent];
++			break;
++
++		default:
++			break;
++    }
++
++    return voltage;
++}
++
++/*******************************************************************************
++ * EOF
++ ******************************************************************************/
+diff --git a/components/bd70528/bd70528.h b/components/bd70528/bd70528.h
+new file mode 100644
+index 0000000..31fb26c
+--- /dev/null
++++ b/components/bd70528/bd70528.h
+@@ -0,0 +1,264 @@
++/*
++ * Copyright 2019 NXP
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++#ifndef _BD70528_H_
++#define _BD70528_H_
++
++/*******************************************************************************
++ * Includes
++ ******************************************************************************/
++#include <stdint.h>
++#include <stdbool.h>
++#include "fsl_common.h"
++
++/*******************************************************************************
++ * Definitions
++ ******************************************************************************/
++
++/*! @brief BD70528 Default I2C address. */
++#define BD70528_DEFAULT_I2C_ADDR	0x4BU
++
++#define PMIC_LAST_ADDR			0xC5
++
++#define PMIC_ERROR_FLAG			0xFF
++
++/*! @brief Define the Register Memory Map of BD70528. */
++/*! PMIC Register Memory Map. */
++#define BD70528_DEVICE				0x00U
++#define BD70528_FUSE				0x01U
++#define BD70528_PMU_STAT			0x02U
++#define BD70528_SHIPMODE			0x03U
++#define BD70528_HWRESET				0x04U
++#define BD70528_WARMRESET			0x05U
++#define BD70528_STANDBY				0x06U
++#define BD70528_VBAT_CONF			0x07U
++#define BD70528_RST_CONF			0x08U
++#define BD70528_PMU_CONF			0x09U
++#define BD70528_PWRON_CONF			0x0AU
++#define BD70528_RSTB_1_CONF			0x0BU
++#define BD70528_RSTB_2_CONF			0x0CU
++#define BD70528_PG_1_CONF			0x0DU
++#define BD70528_PG_2_CONF			0x0EU
++#define BD70528_BUCK1_EN_CONF		0x0FU
++#define BD70528_BUCK2_EN_CONF		0x10U
++#define BD70528_BUCK3_EN_CONF		0x11U
++#define BD70528_BUCK1_VOLT_WIN_CONF	0x12U
++#define BD70528_BUCK2_VOLT_WIN_CONF	0x13U
++#define BD70528_BUCK3_VOLT_WIN_CONF	0x14U
++#define BD70528_BUCK1_VOLT_CONF		0x15U
++#define BD70528_BUCK2_VOLT_CONF		0x16U
++#define BD70528_BUCK3_VOLT_CONF		0x17U
++#define BD70528_LDO1_MODE_CONF		0x18U
++#define BD70528_LDO2_MODE_CONF		0x19U
++#define BD70528_LDO3_MODE_CONF		0x1AU
++#define BD70528_LDO1_EN_CONF		0x1BU
++#define BD70528_LDO2_EN_CONF		0x1CU
++#define BD70528_LDO3_EN_CONF		0x1DU
++#define BD70528_LDO1_VOLT_CONF		0x1EU
++#define BD70528_LDO2_VOLT_CONF		0x1FU
++#define BD70528_LDO3_VOLT_CONF		0x20U
++#define BD70528_ACTIVE_DISCHG_CONF	0x21U
++#define BD70528_SEQ_1_CONF			0x22U
++#define BD70528_SEQ_2_CONF			0x23U
++#define BD70528_SEQ_3_CONF			0x24U
++#define BD70528_SEQ_4_CONF			0x25U
++#define BD70528_SEQ_5_CONF			0x26U
++#define BD70528_SEQ_6_CONF			0x27U
++#define BD70528_SEQ_7_CONF			0x28U
++#define BD70528_LED_VOLT_CONF		0x29U
++#define BD70528_LED_EN				0x2AU
++#define BD70528_LED_MODE_CONF		0x2BU
++#define BD70528_C32KOUT_CTRL		0x2CU
++#define BD70528_RTC_COUNT_U			0x2DU
++#define BD70528_RTC_COUNT_L			0x2EU
++#define BD70528_SEC					0x2FU
++#define BD70528_MIN					0x30U
++#define BD70528_HOUR				0x31U
++#define BD70528_WEEK				0x32U
++#define BD70528_DAY					0x33U
++#define BD70528_MONTH				0x34U
++#define BD70528_YEAR				0x35U
++#define BD70528_ALM_SEC				0x36U
++#define BD70528_ALM_MIN				0x37U
++#define BD70528_ALM_HOUR			0x38U
++#define BD70528_ALM_WEEK			0x39U
++#define BD70528_ALM_DAY				0x3AU
++#define BD70528_ALM_MONTH			0x3BU
++#define BD70528_ALM_YEAR			0x3CU
++#define BD70528_ALM_MASK			0x3DU
++#define BD70528_ALM_REPEAT			0x3EU
++#define BD70528_ELPS_TIM_SEC		0x3FU
++#define BD70528_ELPS_TIM_MIN		0x40U
++#define BD70528_ELPS_TIM_HOUR		0x41U
++#define BD70528_ELPS_TIM_EN			0x42U
++#define BD70528_WAKEUP_SEC			0x43U
++#define BD70528_WAKEUP_MIN			0x44U
++#define BD70528_WAKEUP_HOUR			0x45U
++#define BD70528_WAKEUP_EN			0x46U
++#define BD70528_WDT_SEC				0x47U
++#define BD70528_WDT_MIN				0x48U
++#define BD70528_WDT_HOUR			0x49U
++#define BD70528_WDT_CTRL			0x4AU
++#define BD70528_RST_2_CONF			0x4BU
++#define BD70528_RTC_EN				0x4CU
++#define BD70528_GPI_1_CONF			0x4DU
++#define BD70528_GPO_1_CONF			0x4EU
++#define BD70528_GPI_2_CONF			0x4FU
++#define BD70528_GPO_2_CONF			0x50U
++#define BD70528_GPI_3_CONF			0x51U
++#define BD70528_GPO_3_CONF			0x52U
++#define BD70528_GPI_4_CONF			0x53U
++#define BD70528_GPO_4_CONF			0x54U
++#define BD70528_RSTIN_CONF			0x55U
++#define BD70528_DCIN_1_STAT			0x56U
++#define BD70528_BAT_1_STAT			0x57U
++#define BD70528_BAT_2_STAT			0x58U
++#define BD70528_CHG_1_STAT			0x59U
++#define BD70528_CHG_2_STAT			0x5AU
++#define BD70528_CHG_3_STAT			0x5BU
++#define BD70528_DCIN_1_CONF			0x5CU
++#define BD70528_DCIN_2_CONF			0x5DU
++#define BD70528_CHG_1_CTRL			0x5EU
++#define BD70528_CHG_1_CONF			0x5FU
++#define BD70528_CHG_2_CONF			0x60U
++#define BD70528_CHG_3_CONF			0x61U
++#define BD70528_CHG_4_CONF			0x62U
++#define BD70528_CHG_5_CONF			0x63U
++#define BD70528_CHG_6_CONF			0x64U
++#define BD70528_CHG_7_CONF			0x65U
++#define BD70528_CHG_8_CONF			0x66U
++#define BD70528_CHG_9_CONF			0x67U
++#define BD70528_CHG_10_CONF			0x68U
++#define BD70528_NTC_T1_TH			0x69U
++#define BD70528_NTC_T2_TH			0x6AU
++#define BD70528_NTC_T3_TH			0x6BU
++#define BD70528_NTC_T4_TH			0x6CU
++#define BD70528_NTC_T5_TH			0x6DU
++#define BD70528_NTC_HYS_TH			0x6EU
++#define BD70528_ADCVREF_TRIM		0x6FU
++#define BD70528_ADCVREF_CTRL		0x70U
++#define BD70528_ADC_NTC_CODE_U		0x71U
++#define BD70528_ADC_NTC_CODE_L		0x72U
++#define BD70528_ADC_CTRL			0x73U
++#define BD70528_INT_LVL1_MASK		0x74U
++#define BD70528_INT_LVL2_MASK_SHDWN	0x75U
++#define BD70528_INT_LVL2_MASK_PG_FAULT	0x76U
++#define BD70528_INT_LVL2_MASK_VR_FAULT	0x77U
++#define BD70528_INT_LVL2_MASK_PMU	0x78U
++#define BD70528_INT_LVL2_MASK_CHG1	0x79U
++#define BD70528_INT_LVL2_MASK_CHG2	0x7AU
++#define BD70528_INT_LVL2_MASK_RTC	0x7BU
++#define BD70528_INT_LVL2_MASK_GPIO	0x7CU
++#define BD70528_INT_LVL2_MASK_INVALID	0x7DU
++#define BD70528_INT_LVL1_EVNT		0x7EU
++#define BD70528_INT_LVL2_EVNT_SHDWN	0x7FU
++#define BD70528_INT_LVL2_EVNT_PG_FAULT	0x80U
++#define BD70528_INT_LVL2_EVNT_VR_FAULT	0x81U
++#define BD70528_INT_LVL2_EVNT_PMU	0x82U
++#define BD70528_INT_LVL2_EVNT_CHG1	0x83U
++#define BD70528_INT_LVL2_EVNT_CHG2	0x84U
++#define BD70528_INT_LVL2_EVNT_RTC	0x85U
++#define BD70528_INT_LVL2_EVNT_GPIO	0x86U
++#define BD70528_INT_LVL2_EVNT_INVALID	0x87U
++#define BD70528_INT_LVL2_STAT_SHDWN	0x88U
++#define BD70528_INT_LVL2_STAT_PG_FAULT	0x89U
++#define BD70528_INT_LVL2_STAT_VR_FAULT	0x8AU
++#define BD70528_INT_LVL2_STAT_PMU	0x8BU
++#define BD70528_INT_LVL2_STAT_CHG1	0x8CU
++#define BD70528_INT_LVL2_STAT_CHG2	0x8DU
++#define BD70528_INT_LVL2_STAT_RTC	0x8EU
++#define BD70528_INT_LVL2_STAT_GPIO	0x8FU
++#define BD70528_INT_LVL2_STAT_INVALID	0x90U
++#define BD70528_PWRON_2_CONF		0x91U
++#define BD70528_RTC_2_EN			0x92U
++#define BD70528_RTC_3_EN			0x93U
++#define BD70528_CHG_11_CONF			0x94U
++#define BD70528_CHG_12_CONF			0xC5U
++
++/*! @brief BD70528 Operating Status definition. */
++typedef enum _bd70528_operating_status
++{
++    kBD70528_OperatingStatusIdle	= 0x1U,
++    kBD70528_OperatingStatusStby	= 0x2U,
++    kBD70528_OperatingStatusOn		= 0x3U,
++    kBD70528_OperatingStatusIdleULP	= 0x4U,
++    kBD70528_OperatingStatusStbyULP	= 0x5U,
++    kBD70528_OperatingStatusOnULP	= 0x6U,
++    kBD70528_OperatingStatusLP		= 0x7U,
++} bd70528_operating_status_t;
++
++/*! @brief BD70528 Sub-Module definition. */
++typedef enum _bd70528_module
++{
++    kBD70528_ModuleBuck1	= 0x0U,
++    kBD70528_ModuleBuck2	= 0x1U,
++    kBD70528_ModuleBuck3	= 0x2U,
++    kBD70528_ModuleLdo1		= 0x3U,
++    kBD70528_ModuleLdo2		= 0x4U,
++    kBD70528_ModuleLdo3		= 0x5U,
++} bd70528_module_t;
++
++/*! @brief BD70528 Handle definition. */
++typedef struct _bd70528_handle
++{
++    /* Pointer to the user-defined I2C Send Data function. */
++    status_t (*I2C_SendFunc)(uint8_t deviceAddress, uint32_t subAddress, uint8_t subAddressSize,
++                             const uint8_t *txBuff, uint8_t txBuffSize);
++    /* Pointer to the user-defined I2C Receive Data function. */
++    status_t (*I2C_ReceiveFunc)(uint8_t deviceAddress, uint32_t subAddress, uint8_t subAddressSize,
++                                uint8_t *rxBuff, uint8_t rxBuffSize);
++    /* The I2C Slave Address Read From OTP. */
++    uint8_t slaveAddress;
++} bd70528_handle_t;
++
++/*! @brief BD70528 Configuration Structure definition. */
++typedef struct _bd70528_config
++{
++    /* Pointer to the user-defined I2C Send Data function. */
++    status_t (*I2C_SendFunc)(uint8_t deviceAddress, uint32_t subAddress, uint8_t subAddressSize,
++                             const uint8_t *txBuff, uint8_t txBuffSize);
++    /* Pointer to the user-defined I2C Receive Data function. */
++    status_t (*I2C_ReceiveFunc)(uint8_t deviceAddress, uint32_t subAddress, uint8_t subAddressSize,
++                                uint8_t *rxBuff, uint8_t rxBuffSize);
++    /* The BD70528 I2C Slave Address. */
++    uint8_t slaveAddress;
++} bd70528_config_t;
++
++/*******************************************************************************
++ * API
++ ******************************************************************************/
++#if defined(__cplusplus)
++extern "C" {
++#endif
++
++void BD70528_GetDefaultConfig(bd70528_config_t *config);
++
++void BD70528_Init(bd70528_handle_t *handle, const bd70528_config_t *config);
++
++bool BD70528_ReadReg(bd70528_handle_t *handle, uint8_t reg, uint8_t *val);
++
++bool BD70528_WriteReg(bd70528_handle_t *handle, uint8_t reg, uint8_t val);
++
++bool BD70528_ModifyReg(bd70528_handle_t *handle, uint8_t reg, uint8_t mask, uint8_t val);
++
++void BD70528_EnableRegulator(bd70528_handle_t *handle, bd70528_module_t module,
++            bd70528_operating_status_t status, bool enable);
++
++bool BD70528_IsRegulatorEnabled(bd70528_handle_t *handle, bd70528_module_t module,
++            bd70528_operating_status_t status);
++
++void BD70528_SetRegulatorOutputVoltage(bd70528_handle_t *handle, bd70528_module_t module,
++            bd70528_operating_status_t status, uint32_t voltage);
++
++uint32_t BD70528_GetRegulatorOutputVoltage(bd70528_handle_t *handle, bd70528_module_t module,
++			bd70528_operating_status_t status);
++
++#if defined(__cplusplus)
++}
++#endif
++
++#endif /* _BD70528_H_ */
+-- 
+2.17.1
+

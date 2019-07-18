@@ -1,0 +1,626 @@
+diff --git a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.c b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.c
+index 308ebb6..6d0d47a 100644
+--- a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.c
++++ b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.c
+@@ -48,18 +48,19 @@
+ enum
+ {
+     APP_INPUT_ONOFF = 0U,
+-    APP_INPUT_VOL_PLUS = 1U,
+-    APP_INPUT_VOL_MINUS = 2U,
+-    APP_INPUT_BT_HOST_WAKE = 3U,
+-    APP_INPUT_WL_HOST_WAKE = 4U,
+-
+-    APP_OUTPUT_WL_REG_ON = 5U,
+-    APP_OUTPUT_BT_REG_ON = 6U,
+-    APP_IO_NUM = 7U
++//    APP_INPUT_VOL_PLUS = 1U,
++//    APP_INPUT_VOL_MINUS = 2U,
++//    APP_INPUT_BT_HOST_WAKE = 3U,
++//    APP_INPUT_WL_HOST_WAKE = 4U,
++
++//    APP_OUTPUT_WL_REG_ON = 5U,
++//    APP_OUTPUT_BT_REG_ON = 6U,
++    APP_OUTPUT_WL_DEV_WAKE,// = 7U,
++    APP_IO_NUM,// = 8U
+ };
+ 
+-#define APP_INPUT_GPIO_START APP_INPUT_VOL_PLUS
+-#define APP_OUTPUT_GPIO_START APP_OUTPUT_WL_REG_ON
++#define APP_INPUT_GPIO_START APP_OUTPUT_WL_DEV_WAKE
++#define APP_OUTPUT_GPIO_START APP_OUTPUT_WL_DEV_WAKE
+ 
+ typedef enum
+ {
+@@ -117,6 +118,9 @@ static status_t PMIC_I2C_ReceiveFunc(
+ 
+ extern void APP_UpdateSimDgo(uint32_t gpIdx, uint32_t mask, uint32_t value);
+ 
++/* Send data to PCA6416 device on I2C Bus. */
++static status_t PCA6416_I2C_SendFunc(uint32_t reg, uint16_t value);
++
+ /*******************************************************************************
+  * Variables
+  ******************************************************************************/
+@@ -170,6 +174,9 @@ static const srtm_io_event_t llwuPinModeEvents[] = {
+ static lpi2c_rtos_handle_t lpi2c3Handle;
+ static bool lpi2c3Init;
+ static lpi2c_rtos_handle_t *pmicI2cHandle;
++static bool pca6416Init = false;
++static uint16_t pca6416_shadow = 0x0000;
++static lpi2c_rtos_handle_t *pca6416I2cHandle;
+ static bd70528_handle_t bd70528Handle;
+ static srtm_dispatcher_t disp;
+ static srtm_peercore_t core;
+@@ -377,54 +384,54 @@ void SNVS_IRQHandler(void)
+ 
+ static void APP_HandleGPIOHander(uint8_t gpioIdx)
+ {
+-    BaseType_t reschedule = pdFALSE;
+-    PORT_Type *port = ports[gpioIdx];
+-    GPIO_Type *gpio = gpios[gpioIdx];
+-
+-    if (APP_GPIO_IDX(APP_PIN_BT_HOST_WAKE) == gpioIdx &&
+-        (1U << APP_PIN_IDX(APP_PIN_BT_HOST_WAKE)) & PORT_GetPinsInterruptFlags(port))
+-    {
+-        PORT_ClearPinsInterruptFlags(port, 1U << APP_PIN_IDX(APP_PIN_BT_HOST_WAKE));
+-        if (suspendContext.io.data[APP_INPUT_BT_HOST_WAKE].wakeup || MU_GetOtherCorePowerMode(MUA) != kMU_PowerModeDsm)
+-        {
+-            /* Only when CA7 is running or wakeup flag is set, we'll notify the event to CA7. */
+-            SRTM_IoService_NotifyInputEvent(ioService, APP_PIN_BT_HOST_WAKE);
+-        }
+-    }
+-
+-    if (APP_GPIO_IDX(APP_PIN_WL_HOST_WAKE) == gpioIdx &&
+-        (1U << APP_PIN_IDX(APP_PIN_WL_HOST_WAKE)) & PORT_GetPinsInterruptFlags(port))
+-    {
+-        PORT_ClearPinsInterruptFlags(port, 1U << APP_PIN_IDX(APP_PIN_WL_HOST_WAKE));
+-        if (suspendContext.io.data[APP_INPUT_WL_HOST_WAKE].wakeup || MU_GetOtherCorePowerMode(MUA) != kMU_PowerModeDsm)
+-        {
+-            /* Only when CA7 is running or wakeup flag is set, we'll notify the event to CA7. */
+-            SRTM_IoService_NotifyInputEvent(ioService, APP_PIN_WL_HOST_WAKE);
+-        }
+-    }
+-
+-    if (APP_GPIO_IDX(APP_PIN_VOL_PLUS) == gpioIdx &&
+-        (1U << APP_PIN_IDX(APP_PIN_VOL_PLUS)) & PORT_GetPinsInterruptFlags(port))
+-    {
+-        PORT_ClearPinsInterruptFlags(port, (1U << APP_PIN_IDX(APP_PIN_VOL_PLUS)));
+-        PORT_SetPinInterruptConfig(port, APP_PIN_IDX(APP_PIN_VOL_PLUS), kPORT_InterruptOrDMADisabled);
+-        suspendContext.io.data[APP_INPUT_VOL_PLUS].value = GPIO_PinRead(gpio, APP_PIN_IDX(APP_PIN_VOL_PLUS));
+-        xTimerStartFromISR(suspendContext.io.data[APP_INPUT_VOL_PLUS].timer, &reschedule);
+-    }
+-
+-    if (APP_GPIO_IDX(APP_PIN_VOL_MINUS) == gpioIdx &&
+-        (1U << APP_PIN_IDX(APP_PIN_VOL_MINUS)) & PORT_GetPinsInterruptFlags(port))
+-    {
+-        PORT_ClearPinsInterruptFlags(port, (1U << APP_PIN_IDX(APP_PIN_VOL_MINUS)));
+-        PORT_SetPinInterruptConfig(port, APP_PIN_IDX(APP_PIN_VOL_MINUS), kPORT_InterruptOrDMADisabled);
+-        suspendContext.io.data[APP_INPUT_VOL_MINUS].value = GPIO_PinRead(gpio, APP_PIN_IDX(APP_PIN_VOL_MINUS));
+-        xTimerStartFromISR(suspendContext.io.data[APP_INPUT_VOL_MINUS].timer, &reschedule);
+-    }
+-
+-    if (reschedule)
+-    {
+-        portYIELD_FROM_ISR(reschedule);
+-    }
++//    BaseType_t reschedule = pdFALSE;
++//    PORT_Type *port = ports[gpioIdx];
++//    GPIO_Type *gpio = gpios[gpioIdx];
++//
++//    if (APP_GPIO_IDX(APP_PIN_BT_HOST_WAKE) == gpioIdx &&
++//        (1U << APP_PIN_IDX(APP_PIN_BT_HOST_WAKE)) & PORT_GetPinsInterruptFlags(port))
++//    {
++//        PORT_ClearPinsInterruptFlags(port, 1U << APP_PIN_IDX(APP_PIN_BT_HOST_WAKE));
++//        if (suspendContext.io.data[APP_INPUT_BT_HOST_WAKE].wakeup || MU_GetOtherCorePowerMode(MUA) != kMU_PowerModeDsm)
++//        {
++//            /* Only when CA7 is running or wakeup flag is set, we'll notify the event to CA7. */
++//            SRTM_IoService_NotifyInputEvent(ioService, APP_PIN_BT_HOST_WAKE);
++//        }
++//    }
++//
++//    if (APP_GPIO_IDX(APP_PIN_WL_HOST_WAKE) == gpioIdx &&
++//        (1U << APP_PIN_IDX(APP_PIN_WL_HOST_WAKE)) & PORT_GetPinsInterruptFlags(port))
++//    {
++//        PORT_ClearPinsInterruptFlags(port, 1U << APP_PIN_IDX(APP_PIN_WL_HOST_WAKE));
++//        if (suspendContext.io.data[APP_INPUT_WL_HOST_WAKE].wakeup || MU_GetOtherCorePowerMode(MUA) != kMU_PowerModeDsm)
++//        {
++//            /* Only when CA7 is running or wakeup flag is set, we'll notify the event to CA7. */
++//            SRTM_IoService_NotifyInputEvent(ioService, APP_PIN_WL_HOST_WAKE);
++//        }
++//    }
++//
++//    if (APP_GPIO_IDX(APP_PIN_VOL_PLUS) == gpioIdx &&
++//        (1U << APP_PIN_IDX(APP_PIN_VOL_PLUS)) & PORT_GetPinsInterruptFlags(port))
++//    {
++//        PORT_ClearPinsInterruptFlags(port, (1U << APP_PIN_IDX(APP_PIN_VOL_PLUS)));
++//        PORT_SetPinInterruptConfig(port, APP_PIN_IDX(APP_PIN_VOL_PLUS), kPORT_InterruptOrDMADisabled);
++//        suspendContext.io.data[APP_INPUT_VOL_PLUS].value = GPIO_PinRead(gpio, APP_PIN_IDX(APP_PIN_VOL_PLUS));
++//        xTimerStartFromISR(suspendContext.io.data[APP_INPUT_VOL_PLUS].timer, &reschedule);
++//    }
++//
++//    if (APP_GPIO_IDX(APP_PIN_VOL_MINUS) == gpioIdx &&
++//        (1U << APP_PIN_IDX(APP_PIN_VOL_MINUS)) & PORT_GetPinsInterruptFlags(port))
++//    {
++//        PORT_ClearPinsInterruptFlags(port, (1U << APP_PIN_IDX(APP_PIN_VOL_MINUS)));
++//        PORT_SetPinInterruptConfig(port, APP_PIN_IDX(APP_PIN_VOL_MINUS), kPORT_InterruptOrDMADisabled);
++//        suspendContext.io.data[APP_INPUT_VOL_MINUS].value = GPIO_PinRead(gpio, APP_PIN_IDX(APP_PIN_VOL_MINUS));
++//        xTimerStartFromISR(suspendContext.io.data[APP_INPUT_VOL_MINUS].timer, &reschedule);
++//    }
++//
++//    if (reschedule)
++//    {
++//        portYIELD_FROM_ISR(reschedule);
++//    }
+ }
+ 
+ void PCTLA_IRQHandler(void)
+@@ -468,6 +475,82 @@ static srtm_status_t APP_IO_ConfOutput(uint16_t ioId, srtm_io_value_t ioValue)
+     return SRTM_Status_Success;
+ }
+ 
++static srtm_status_t PCA6416_Init()
++{
++    if (!pca6416Init) {
++        status_t status = PCA6416_I2C_SendFunc(PTA6416_OUTPUT_PORT0_REG, 0x0000);
++        if (status == kStatus_Success) {
++            status = PCA6416_I2C_SendFunc(PTA6416_CONFIG_PORT0_REG, 0x0000);
++        }
++        if (status != kStatus_Success) {
++            return SRTM_Status_Error;
++        }
++        pca6416_shadow = 0x0000;
++        pca6416Init = true;
++    }
++    return SRTM_Status_Success;
++}
++
++static srtm_status_t APP_IO_PCA6416_SetOutput(srtm_service_t service,
++                                      srtm_peercore_t core,
++                                      uint16_t ioId,
++                                      srtm_io_value_t ioValue)
++{
++    srtm_status_t result;
++    status_t status;
++    uint16_t val;
++    uint16_t pin = ioId & 0x1f;
++  
++    assert(ioId >= APP_PIN_PCA6416_OFFSET && ioId < (APP_PIN_PCA6416_OFFSET+APP_PIN_PCA6416_NUM_PINS));
++    assert(ioValue == 0 || ioValue == 1);
++
++    if (!pca6416Init) {
++        result = PCA6416_Init();
++    }
++    if (pca6416Init) {
++        if (ioValue == 0) {
++            val = pca6416_shadow & ~(1<<pin);
++        } else {
++            val = pca6416_shadow | (1<<pin);
++        }
++        status = PCA6416_I2C_SendFunc(PTA6416_OUTPUT_PORT0_REG, val);
++        if (status == kStatus_Success) {
++            pca6416_shadow = val;
++            result = SRTM_Status_Success;
++        } else {
++            result = SRTM_Status_Error;
++        }
++    }
++    return result;
++}
++
++static srtm_status_t APP_IO_PCA6416_GetOutput(srtm_service_t service,
++                                      srtm_peercore_t core,
++                                      uint16_t ioId,
++                                      srtm_io_value_t *pIoValue)
++{
++    srtm_status_t result;
++    status_t status;
++    uint16_t val;
++    uint16_t pin = ioId & 0x1f;
++  
++    assert(ioId >= APP_PIN_PCA6416_OFFSET && ioId < (APP_PIN_PCA6416_OFFSET+APP_PIN_PCA6416_NUM_PINS));
++    assert(pIoValue);
++
++    if (!pca6416Init) {
++        result = PCA6416_Init();
++    }
++    if (pca6416Init) {
++        if ((pca6416_shadow >> pin) & 1) {
++            *pIoValue = SRTM_IoValueHigh;
++        } else {
++            *pIoValue = SRTM_IoValueLow;
++        }
++        result = SRTM_Status_Success;
++    }
++    return result;
++}
++
+ static srtm_status_t APP_IO_SetOutput(srtm_service_t service,
+                                       srtm_peercore_t core,
+                                       uint16_t ioId,
+@@ -725,6 +808,14 @@ static status_t PMIC_I2C_ReceiveFunc(
+     return I2C_ReceiveFunc(pmicI2cHandle, deviceAddress, subAddress, subAddressSize, rxBuff, rxBuffSize);
+ }
+ 
++static status_t PCA6416_I2C_SendFunc(uint32_t reg, uint16_t value)
++{
++    uint8_t data[] = { value&0xff, (value>>8) };
++
++    /* Calling I2C Transfer API to start send. */
++    return I2C_SendFunc(pca6416I2cHandle, PCA6416_I2C_SLAVE_ADDR_7BIT, reg, 1, &data[0], 2);
++}
++
+ void APP_UpdateSimDgo(uint32_t gpIdx, uint32_t mask, uint32_t value)
+ {
+     uint32_t mask0 = SIM_SIM_DGO_CTRL0_WR_ACK_DGO_GP6_MASK | SIM_SIM_DGO_CTRL0_WR_ACK_DGO_GP5_MASK |
+@@ -982,47 +1073,47 @@ static void APP_LinkupTimerCallback(TimerHandle_t xTimer)
+     }
+ }
+ 
+-static void APP_VolPlusTimerCallback(TimerHandle_t xTimer)
+-{
+-    uint8_t gpioIdx = APP_GPIO_IDX(APP_PIN_VOL_PLUS);
+-    uint8_t pinIdx = APP_PIN_IDX(APP_PIN_VOL_PLUS);
+-    srtm_keypad_value_t value;
+-
+-    if (GPIO_PinRead(gpios[gpioIdx], pinIdx) == suspendContext.io.data[APP_INPUT_VOL_PLUS].value)
+-    {
+-        value = suspendContext.io.data[APP_INPUT_VOL_PLUS].value ? SRTM_KeypadValuePressed : SRTM_KeypadValueReleased;
+-        /* No glitch, a valid user operation */
+-        if (suspendContext.io.data[APP_INPUT_VOL_PLUS].wakeup || MU_GetOtherCorePowerMode(MUA) != kMU_PowerModeDsm)
+-        {
+-            /* Only when CA7 is running or wakeup flag is set, we'll notify the event to CA7. */
+-            SRTM_KeypadService_NotifyKeypadEvent(keypadService, APP_KEYPAD_INDEX_VOL_PLUS, value);
+-        }
+-    }
+-
+-    /* Restore pin detection interrupt */
+-    APP_IO_ConfInput(APP_INPUT_VOL_PLUS, suspendContext.io.data[APP_INPUT_VOL_PLUS].event, false);
+-}
+-
+-static void APP_VolMinusTimerCallback(TimerHandle_t xTimer)
+-{
+-    uint8_t gpioIdx = APP_GPIO_IDX(APP_PIN_VOL_MINUS);
+-    uint8_t pinIdx = APP_PIN_IDX(APP_PIN_VOL_MINUS);
+-    srtm_keypad_value_t value;
+-
+-    if (GPIO_PinRead(gpios[gpioIdx], pinIdx) == suspendContext.io.data[APP_INPUT_VOL_MINUS].value)
+-    {
+-        value = suspendContext.io.data[APP_INPUT_VOL_MINUS].value ? SRTM_KeypadValuePressed : SRTM_KeypadValueReleased;
+-        /* No glitch, a valid user operation */
+-        if (suspendContext.io.data[APP_INPUT_VOL_MINUS].wakeup || MU_GetOtherCorePowerMode(MUA) != kMU_PowerModeDsm)
+-        {
+-            /* Only when CA7 is running or wakeup flag is set, we'll notify the event to CA7. */
+-            SRTM_KeypadService_NotifyKeypadEvent(keypadService, APP_KEYPAD_INDEX_VOL_MINUS, value);
+-        }
+-    }
+-
+-    /* Restore pin detection interrupt */
+-    APP_IO_ConfInput(APP_INPUT_VOL_MINUS, suspendContext.io.data[APP_INPUT_VOL_MINUS].event, false);
+-}
++//static void APP_VolPlusTimerCallback(TimerHandle_t xTimer)
++//{
++//    uint8_t gpioIdx = APP_GPIO_IDX(APP_PIN_VOL_PLUS);
++//    uint8_t pinIdx = APP_PIN_IDX(APP_PIN_VOL_PLUS);
++//    srtm_keypad_value_t value;
++//
++//    if (GPIO_PinRead(gpios[gpioIdx], pinIdx) == suspendContext.io.data[APP_INPUT_VOL_PLUS].value)
++//    {
++//        value = suspendContext.io.data[APP_INPUT_VOL_PLUS].value ? SRTM_KeypadValuePressed : SRTM_KeypadValueReleased;
++//        /* No glitch, a valid user operation */
++//        if (suspendContext.io.data[APP_INPUT_VOL_PLUS].wakeup || MU_GetOtherCorePowerMode(MUA) != kMU_PowerModeDsm)
++//        {
++//            /* Only when CA7 is running or wakeup flag is set, we'll notify the event to CA7. */
++//            SRTM_KeypadService_NotifyKeypadEvent(keypadService, APP_KEYPAD_INDEX_VOL_PLUS, value);
++//        }
++//    }
++//
++//    /* Restore pin detection interrupt */
++//    APP_IO_ConfInput(APP_INPUT_VOL_PLUS, suspendContext.io.data[APP_INPUT_VOL_PLUS].event, false);
++//}
++
++//static void APP_VolMinusTimerCallback(TimerHandle_t xTimer)
++//{
++//    uint8_t gpioIdx = APP_GPIO_IDX(APP_PIN_VOL_MINUS);
++//    uint8_t pinIdx = APP_PIN_IDX(APP_PIN_VOL_MINUS);
++//    srtm_keypad_value_t value;
++//
++//    if (GPIO_PinRead(gpios[gpioIdx], pinIdx) == suspendContext.io.data[APP_INPUT_VOL_MINUS].value)
++//    {
++//        value = suspendContext.io.data[APP_INPUT_VOL_MINUS].value ? SRTM_KeypadValuePressed : SRTM_KeypadValueReleased;
++//        /* No glitch, a valid user operation */
++//        if (suspendContext.io.data[APP_INPUT_VOL_MINUS].wakeup || MU_GetOtherCorePowerMode(MUA) != kMU_PowerModeDsm)
++//        {
++//            /* Only when CA7 is running or wakeup flag is set, we'll notify the event to CA7. */
++//            SRTM_KeypadService_NotifyKeypadEvent(keypadService, APP_KEYPAD_INDEX_VOL_MINUS, value);
++//        }
++//    }
++//
++//    /* Restore pin detection interrupt */
++//    APP_IO_ConfInput(APP_INPUT_VOL_MINUS, suspendContext.io.data[APP_INPUT_VOL_MINUS].event, false);
++//}
+ 
+ static void APP_OnOffTimerCallback(TimerHandle_t xTimer)
+ {
+@@ -1272,6 +1363,26 @@ static void APP_SRTM_DeinitI2C(lpi2c_rtos_handle_t *handle)
+     (void)status;
+ }
+ 
++static void APP_SRTM_InitPCA6416Device(void)
++{
++    if (!lpi2c3Init)
++    {
++        APP_SRTM_InitI2C(&lpi2c3Handle, LPI2C3, APP_LPI2C3_BAUDRATE, CLOCK_GetIpFreq(kCLOCK_Lpi2c3));
++        lpi2c3Init = true;
++    }
++    pca6416I2cHandle = &lpi2c3Handle;
++}
++
++static void APP_SRTM_DeinitPCA6416Device(void)
++{
++    if (lpi2c3Init)
++    {
++        APP_SRTM_DeinitI2C(&lpi2c3Handle);
++        lpi2c3Init = false;
++    }
++    pca6416I2cHandle = NULL;
++}
++
+ static void APP_SRTM_InitPmicDevice(void)
+ {
+     if (!lpi2c3Init)
+@@ -1308,6 +1419,10 @@ static void APP_SRTM_InitPmicService(void)
+     bd70528Config.I2C_ReceiveFunc = PMIC_I2C_ReceiveFunc;
+     BD70528_Init(&bd70528Handle, &bd70528Config);
+ 
++    /* Configure supported voltage ranges */
++    BD70528_WriteReg(&bd70528Handle, BD70528_BUCK3_VOLT_WIN_CONF, 0x85); /* 1.05V-1.2V */
++    BD70528_WriteReg(&bd70528Handle, BD70528_LDO1_VOLT_CONF, 0x03); /* LDO1=1.8V */
++
+     /* Create and register PMIC service */
+     pmicAdapter = SRTM_Bd70528Adapter_Create(&bd70528Handle);
+     service = SRTM_PmicService_Create(pmicAdapter);
+@@ -1358,17 +1473,18 @@ static void APP_SRTM_InitIoKeyService(void)
+     /* Init IO structure used in the application. */
+     /* Keypad */
+     suspendContext.io.data[APP_INPUT_ONOFF].index = APP_KEYPAD_INDEX_ONOFF;
+-    suspendContext.io.data[APP_INPUT_VOL_PLUS].index = APP_KEYPAD_INDEX_VOL_PLUS;
+-    suspendContext.io.data[APP_INPUT_VOL_MINUS].index = APP_KEYPAD_INDEX_VOL_MINUS;
++//    suspendContext.io.data[APP_INPUT_VOL_PLUS].index = APP_KEYPAD_INDEX_VOL_PLUS;
++//    suspendContext.io.data[APP_INPUT_VOL_MINUS].index = APP_KEYPAD_INDEX_VOL_MINUS;
+ 
+     /* GPIO ID */
+     suspendContext.io.data[APP_INPUT_ONOFF].ioId = APP_PIN_ONOFF; /* Special SNVS IO */
+-    suspendContext.io.data[APP_INPUT_VOL_PLUS].ioId = APP_PIN_VOL_PLUS;
+-    suspendContext.io.data[APP_INPUT_VOL_MINUS].ioId = APP_PIN_VOL_MINUS;
+-    suspendContext.io.data[APP_INPUT_BT_HOST_WAKE].ioId = APP_PIN_BT_HOST_WAKE;
+-    suspendContext.io.data[APP_INPUT_WL_HOST_WAKE].ioId = APP_PIN_WL_HOST_WAKE;
+-    suspendContext.io.data[APP_OUTPUT_WL_REG_ON].ioId = APP_PIN_WL_REG_ON;
+-    suspendContext.io.data[APP_OUTPUT_BT_REG_ON].ioId = APP_PIN_BT_REG_ON;
++//    suspendContext.io.data[APP_INPUT_VOL_PLUS].ioId = APP_PIN_VOL_PLUS;
++//    suspendContext.io.data[APP_INPUT_VOL_MINUS].ioId = APP_PIN_VOL_MINUS;
++//    suspendContext.io.data[APP_INPUT_BT_HOST_WAKE].ioId = APP_PIN_BT_HOST_WAKE;
++//    suspendContext.io.data[APP_INPUT_WL_HOST_WAKE].ioId = APP_PIN_WL_HOST_WAKE;
++//    suspendContext.io.data[APP_OUTPUT_WL_REG_ON].ioId = APP_PIN_WL_REG_ON;
++//    suspendContext.io.data[APP_OUTPUT_BT_REG_ON].ioId = APP_PIN_BT_REG_ON;
++    suspendContext.io.data[APP_OUTPUT_WL_DEV_WAKE].ioId = APP_PIN_WL_DEV_WAKE;
+ 
+     APP_SRTM_InitIoKeyDevice();
+ 
+@@ -1378,11 +1494,23 @@ static void APP_SRTM_InitIoKeyService(void)
+     EnableIRQ(PCTLA_IRQn);
+     EnableIRQ(PCTLB_IRQn);
+ 
++    APP_SRTM_InitPCA6416Device();
++    
+     ioService = SRTM_IoService_Create();
+-    SRTM_IoService_RegisterPin(ioService, APP_PIN_BT_REG_ON, APP_IO_SetOutput, APP_IO_GetInput, NULL, NULL);
+-    SRTM_IoService_RegisterPin(ioService, APP_PIN_WL_REG_ON, APP_IO_SetOutput, APP_IO_GetInput, NULL, NULL);
+-    SRTM_IoService_RegisterPin(ioService, APP_PIN_BT_HOST_WAKE, NULL, APP_IO_GetInput, APP_IO_ConfIEvent, NULL);
+-    SRTM_IoService_RegisterPin(ioService, APP_PIN_WL_HOST_WAKE, NULL, APP_IO_GetInput, APP_IO_ConfIEvent, NULL);
++//    SRTM_IoService_RegisterPin(ioService, APP_PIN_BT_REG_ON, APP_IO_SetOutput, APP_IO_GetInput, NULL, NULL);
++//    SRTM_IoService_RegisterPin(ioService, APP_PIN_WL_REG_ON, APP_IO_SetOutput, APP_IO_GetInput, NULL, NULL);
++    SRTM_IoService_RegisterPin(ioService, APP_PIN_WL_DEV_WAKE, APP_IO_SetOutput, APP_IO_GetInput, NULL, NULL);
++//    SRTM_IoService_RegisterPin(ioService, APP_PIN_BT_HOST_WAKE, NULL, APP_IO_GetInput, APP_IO_ConfIEvent, NULL);
++//    SRTM_IoService_RegisterPin(ioService, APP_PIN_WL_HOST_WAKE, NULL, APP_IO_GetInput, APP_IO_ConfIEvent, NULL);
++    for (int i = 0; i < APP_PIN_PCA6416_NUM_PINS; i++) {
++      srtm_status_t status = SRTM_IoService_RegisterPin(ioService, APP_PIN_PCA6416_OFFSET+i, APP_IO_PCA6416_SetOutput, APP_IO_PCA6416_GetOutput, NULL, NULL);
++      if (status != SRTM_Status_Success) {
++        SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_WARN, "%s Failed to register pin (id %x%x) for PCA6416, error %d\r\n", __func__, i, i+APP_PIN_PCA6416_OFFSET, status);
++      } else {
++        SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s Registered pin %d (id 0x%x) for PCA6416\r\n", __func__, i, i+APP_PIN_PCA6416_OFFSET);
++      }
++        
++    }
+     SRTM_Dispatcher_RegisterService(disp, ioService);
+ 
+     keypadService = SRTM_KeypadService_Create();
+@@ -1723,12 +1851,12 @@ void APP_SRTM_Init(void)
+         xTimerCreate("Linkup", APP_MS2TICK(APP_LINKUP_TIMER_PERIOD_MS), pdFALSE, NULL, APP_LinkupTimerCallback);
+     assert(linkupTimer);
+ 
+-    suspendContext.io.data[APP_INPUT_VOL_PLUS].timer =
+-        xTimerCreate("Vol+", APP_MS2TICK(50), pdFALSE, NULL, APP_VolPlusTimerCallback);
+-    assert(suspendContext.io.data[APP_INPUT_VOL_PLUS].timer);
+-    suspendContext.io.data[APP_INPUT_VOL_MINUS].timer =
+-        xTimerCreate("Vol-", APP_MS2TICK(50), pdFALSE, NULL, APP_VolMinusTimerCallback);
+-    assert(suspendContext.io.data[APP_INPUT_VOL_MINUS].timer);
++//    suspendContext.io.data[APP_INPUT_VOL_PLUS].timer =
++//        xTimerCreate("Vol+", APP_MS2TICK(50), pdFALSE, NULL, APP_VolPlusTimerCallback);
++//    assert(suspendContext.io.data[APP_INPUT_VOL_PLUS].timer);
++//    suspendContext.io.data[APP_INPUT_VOL_MINUS].timer =
++//        xTimerCreate("Vol-", APP_MS2TICK(50), pdFALSE, NULL, APP_VolMinusTimerCallback);
++//    assert(suspendContext.io.data[APP_INPUT_VOL_MINUS].timer);
+ 
+     suspendContext.io.data[APP_INPUT_ONOFF].timer =
+         xTimerCreate("OnOff", APP_MS2TICK(50), pdTRUE, NULL, APP_OnOffTimerCallback);
+@@ -1750,6 +1878,7 @@ void APP_SRTM_Suspend(void)
+ {
+     suspendContext.mu.CR = MUA->CR;
+ 
++    APP_SRTM_DeinitPCA6416Device();
+     APP_SRTM_DeinitPmicDevice();
+ }
+ 
+@@ -1764,6 +1893,7 @@ void APP_SRTM_Resume(bool resume)
+ 
+     /* Even if suspend fails, I2C handle is destroyed. Need to initialize again. */
+     APP_SRTM_InitPmicDevice();
++    APP_SRTM_InitPCA6416Device();
+ }
+ 
+ void APP_SRTM_BootCA7(void)
+diff --git a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.h b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.h
+index eb02a82..938766e 100644
+--- a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.h
++++ b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.h
+@@ -63,12 +63,25 @@
+ #define APP_PIN_ONOFF (0xFFFFU)        /* SNVS Power Pin */
+ #define APP_PIN_A7_POW_EN (0x0019U)    /* PTA25 */
+ #define APP_PIN_DDR_SW_EN (0x0106U)    /* PTB6 */
+-#define APP_PIN_BT_REG_ON (0x000FU)    /* PTA15 */
+-#define APP_PIN_WL_REG_ON (0x000EU)    /* PTA14 */
+-#define APP_PIN_BT_HOST_WAKE (0x0107U) /* PTB7 */
+-#define APP_PIN_WL_HOST_WAKE (0x001FU) /* PTA31 */
+-#define APP_PIN_VOL_MINUS (0x000DU)    /* PTA13 */
+-#define APP_PIN_VOL_PLUS (0x0003U)     /* PTA3 */
++//#define APP_PIN_BT_REG_ON (0x000FU)    /* PTA15 */
++//#define APP_PIN_WL_REG_ON (0x000EU)    /* PTA14 */
++//#define APP_PIN_BT_HOST_WAKE (0x0107U) /* PTB7 */
++//#define APP_PIN_WL_HOST_WAKE (0x001FU) /* PTA31 */
++#define APP_PIN_WL_DEV_WAKE (0x109U)   /* PTB9 */
++//#define APP_PIN_VOL_MINUS (0x000DU)    /* PTA13 */
++//#define APP_PIN_VOL_PLUS (0x0003U)     /* PTA3 */
++
++#define APP_PIN_PCA6416_OFFSET (0x200U)
++#define APP_PIN_PCA6416_NUM_PINS (16)
++#define PCA6416_I2C_SLAVE_ADDR_7BIT 0x20
++#define PTA6416_INPUT_PORT0_REG   0x00
++#define PTA6416_INPUT_PORT1_REG   0x01
++#define PTA6416_OUTPUT_PORT0_REG  0x02
++#define PTA6416_OUTPUT_PORT1_REG  0x03
++#define PTA6416_POLINV_PORT0_REG  0x04
++#define PTA6416_POLINV_PORT1_REG  0x05
++#define PTA6416_CONFIG_PORT0_REG  0x06
++#define PTA6416_CONFIG_PORT1_REG  0x07
+ 
+ /* Keypad index in Linux OS */
+ #define APP_KEYPAD_INDEX_ONOFF (116U)
+diff --git a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/pin_mux.c b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/pin_mux.c
+index 93f9d59..fae5836 100644
+--- a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/pin_mux.c
++++ b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/pin_mux.c
+@@ -153,6 +153,12 @@ void BOARD_InitPins(void) {                                /*!< Function assigne
+     IOMUXC_SetPinConfig(BOARD_INITPINS_SEN_INT_PIN_FUNCTION_ID,
+                         IOMUXC0_SW_MUX_CTL_PAD_PE_MASK |
+                         IOMUXC0_SW_MUX_CTL_PAD_PS_MASK);
++
++    IOMUXC_SetPinMux(BOARD_M4_PERIPOWER_EN_PIN_FUNCTION_ID, 0U);
++    IOMUXC_SetPinConfig(BOARD_M4_PERIPOWER_EN_PIN_FUNCTION_ID,
++                        IOMUXC0_SW_MUX_CTL_PAD_PE_MASK |
++                        IOMUXC0_SW_MUX_CTL_PAD_PS_MASK |
++                        IOMUXC0_SW_MUX_CTL_PAD_OBE_MASK);
+ }
+ 
+ 
+@@ -298,6 +304,12 @@ void BOARD_InitPinsNoQSPI(void) {                          /*!< Function assigne
+     IOMUXC_SetPinConfig(BOARD_INITPINSNOQSPI_SEN_INT_PIN_FUNCTION_ID,
+                         IOMUXC0_SW_MUX_CTL_PAD_PE_MASK |
+                         IOMUXC0_SW_MUX_CTL_PAD_PS_MASK);
++
++    IOMUXC_SetPinMux(BOARD_M4_PERIPOWER_EN_PIN_FUNCTION_ID, 0U);
++    IOMUXC_SetPinConfig(BOARD_M4_PERIPOWER_EN_PIN_FUNCTION_ID,
++                        IOMUXC0_SW_MUX_CTL_PAD_PE_MASK |
++                        IOMUXC0_SW_MUX_CTL_PAD_PS_MASK |
++                        IOMUXC0_SW_MUX_CTL_PAD_OBE_MASK);
+ }
+ 
+ 
+diff --git a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/pin_mux.h b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/pin_mux.h
+index a508842..ea097ee 100644
+--- a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/pin_mux.h
++++ b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/pin_mux.h
+@@ -519,6 +519,14 @@
+ #define BOARD_I2C_CONFIGUREPINS_I2C3_SDA_LABEL                        "I2C3_SDA"   /*!< Label */
+ #define BOARD_I2C_CONFIGUREPINS_I2C3_SDA_NAME                         "I2C3_SDA"   /*!< Identifier name */
+ 
++#define BOARD_M4_PERIPOWER_EN_PERIPHERAL                                     PTA   /*!< Device name: PTA */
++#define BOARD_M4_PERIPOWER_EN_SIGNAL                                        port   /*!< PTA signal: port */
++#define BOARD_M4_PERIPOWER_EN_CHANNEL                                         21   /*!< PTA port channel: 21 */
++#define BOARD_M4_PERIPOWER_EN_PIN_NAME                                     PTA21   /*!< Pin name */
++#define BOARD_M4_PERIPOWER_EN_PIN_FUNCTION_ID                 IOMUXC_PTA21_PTA21   /*!< Pin function id */
++#define BOARD_M4_PERIPOWER_EN_LABEL                                      "PTA21"   /*!< Label */
++#define BOARD_M4_PERIPOWER_EN_NAME                                       "PTA21"   /*!< Identifier name */
++
+ /*!
+  * @addtogroup pin_mux
+  * @{
+diff --git a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/power_mode_switch.c b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/power_mode_switch.c
+index e185398..959f654 100644
+--- a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/power_mode_switch.c
++++ b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/power_mode_switch.c
+@@ -348,12 +348,12 @@ static void APP_IRQDispatcher(IRQn_Type irq, void *param)
+         case SNVS_IRQn:
+             break;
+         case PCTLA_IRQn:
+-            if ((1U << APP_PIN_IDX(APP_PIN_VOL_PLUS)) & PORT_GetPinsInterruptFlags(PORTA))
+-            {
+-                /* Flag will be cleared by app_srtm.c */
+-                xSemaphoreGiveFromISR(s_wakeupSig, NULL);
+-                portYIELD_FROM_ISR(pdTRUE);
+-            }
++//            if ((1U << APP_PIN_IDX(APP_PIN_VOL_PLUS)) & PORT_GetPinsInterruptFlags(PORTA))
++//            {
++//                /* Flag will be cleared by app_srtm.c */
++//                xSemaphoreGiveFromISR(s_wakeupSig, NULL);
++//                portYIELD_FROM_ISR(pdTRUE);
++//            }
+             break;
+         case PCTLB_IRQn:
+             break;
+@@ -477,7 +477,7 @@ static void APP_SetWakeupConfig(lpm_power_mode_t targetMode)
+         else
+         {
+             /* Set PORT and LLWU wakeup pin. */
+-            APP_SRTM_SetWakeupPin(APP_PIN_VOL_PLUS, (uint16_t)LLWU_WAKEUP_PIN_TYPE | 0x100);
++//            APP_SRTM_SetWakeupPin(APP_PIN_VOL_PLUS, (uint16_t)LLWU_WAKEUP_PIN_TYPE | 0x100);
+         }
+     }
+     else
+@@ -485,7 +485,7 @@ static void APP_SetWakeupConfig(lpm_power_mode_t targetMode)
+         /* Set PORT pin. */
+         if (kAPP_WakeupSourcePin == s_wakeupSource)
+         {
+-            APP_SRTM_SetWakeupPin(APP_PIN_VOL_PLUS, (uint16_t)LLWU_WAKEUP_PIN_TYPE);
++//            APP_SRTM_SetWakeupPin(APP_PIN_VOL_PLUS, (uint16_t)LLWU_WAKEUP_PIN_TYPE);
+         }
+     }
+ }
+@@ -494,7 +494,7 @@ static void APP_ClearWakeupConfig(lpm_power_mode_t targetMode)
+ {
+     if (kAPP_WakeupSourcePin == s_wakeupSource)
+     {
+-        APP_SRTM_SetWakeupPin(APP_PIN_VOL_PLUS, (uint16_t)kLLWU_ExternalPinDisable);
++//        APP_SRTM_SetWakeupPin(APP_PIN_VOL_PLUS, (uint16_t)kLLWU_ExternalPinDisable);
+     }
+     else if ((LPM_PowerModeLls == targetMode) || (LPM_PowerModeVlls == targetMode))
+     {
+@@ -982,6 +982,18 @@ int main(void)
+     APP_SRTM_Init();
+     LPM_Init();
+ 
++    /* Make sure M4_PERIPOWER_EN is high */
++    {
++        /* Define the init structure for the output pin*/
++        gpio_pin_config_t pin_config = {
++            kGPIO_DigitalOutput, 1,
++        };
++        CLOCK_EnableClock(kCLOCK_Rgpio2p0);
++        CLOCK_EnableClock(kCLOCK_PctlA);
++        GPIO_PinInit(GPIOA, BOARD_M4_PERIPOWER_EN_CHANNEL, &pin_config);
++        GPIO_PinWrite(GPIOA, BOARD_M4_PERIPOWER_EN_CHANNEL, 1);
++    }
++
+     s_wakeupSig = xSemaphoreCreateBinary();
+ 
+     xTaskCreate(PowerModeSwitchTask, "Main Task", 512U, NULL, tskIDLE_PRIORITY + 1U, NULL);
