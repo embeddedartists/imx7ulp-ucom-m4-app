@@ -1,0 +1,299 @@
+From 16ddccd1aada61bdacadce800f7b5001373c8768 Mon Sep 17 00:00:00 2001
+From: Vanessa Maegima <vanessa.maegima@nxp.com>
+Date: Thu, 25 Jul 2019 14:01:08 -0300
+Subject: [PATCH 3/3] app: Add PMIC RTC application code
+
+Add needed functions to control PMIC RTC from demo application.
+
+Signed-off-by: Vanessa Maegima <vanessa.maegima@nxp.com>
+---
+ .../rohm_power_mode_switch/app_srtm.c         | 187 ++++++++++++++++++
+ .../rohm_power_mode_switch/app_srtm.h         |   8 +
+ .../power_mode_switch.c                       |  40 ++++
+ 3 files changed, 235 insertions(+)
+
+diff --git a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.c b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.c
+index 308ebb6..ffbdfdd 100644
+--- a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.c
++++ b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.c
+@@ -1448,6 +1448,193 @@ static void APP_SRTM_SetBd70528Reg(srtm_dispatcher_t dispatcher, void *param1, v
+     BD70528_WriteReg(&bd70528Handle, reg, value);
+ }
+ 
++uint16_t APP_GetInputDecimals(void) {
++    uint8_t val;
++    uint8_t buffer[2] = {0};
++    uint8_t count = 0;
++
++    for (;;) {
++        val = GETCHAR();
++
++        if (('0' == val) && (count == 0)) {
++            PUTCHAR(val);
++            count++;
++        }
++
++        else if (('0' <= val) && ('9' >= val)) {
++            PUTCHAR(val);
++            buffer[count] = val - '0';
++            count++;
++        }
++
++        if ('\r' == val)
++            break;
++    }
++
++    if (count == 1)
++        val = buffer[0];
++    else if (count == 2)
++        val = 10 * buffer[0] + buffer[1];
++
++    return val;
++}
++
++void APP_SRTM_SetRTC(void)
++{
++    rtc_time_t rtc = {0};
++
++    uint8_t val;
++    uint8_t clock_mask;
++
++    PRINTF("\n\rSetting RTC timer");
++
++    PRINTF("\n\rEnter the date:");
++
++    for (;;) {
++        PRINTF("\n\rMonth (from 01 to 12): ");
++        val = APP_GetInputDecimals();
++        if (0x0C >= val) {
++            rtc.month = val;
++            break;
++        } else
++            PRINTF("\n\rInvalid information, enter again");
++    }
++
++    for (;;) {
++        PRINTF("\n\rDay (from 01 to 31): ");
++        val = APP_GetInputDecimals();
++        if (0x1F >= val) {
++            rtc.day = val;
++            break;
++        } else
++            PRINTF("\n\rInvalid information, enter again");
++    }
++
++    for (;;) {
++        PRINTF("\n\rYear (from 00 to 99): ");
++        val = APP_GetInputDecimals();
++        if (0x63 >= val) {
++            rtc.year = val;
++            break;
++        } else
++            PRINTF("\n\rInvalid information, enter again");
++    }
++
++    for (;;) {
++        PRINTF("\n\rWeekday (0 Sun, 1 Mon, 2 Tue, 3 Wed, 4 Thu, 5 Fri, 6 Sat): ");
++        val = APP_GetInputDecimals();
++        if (0x06 >= val) {
++            rtc.week = val;
++            break;
++        } else
++            PRINTF("\n\rInvalid information, enter again");
++    }
++
++    PRINTF("\n\rEnter the time:");
++
++    for (;;) {
++        PRINTF("\n\rSelect clock (0 12-hour, 1 24-hour): ");
++        val = APP_GetInputDecimals();
++        if (0x01 >= val) {
++            clock_mask = val;
++            break;
++        } else
++            PRINTF("\n\rInvalid information, enter again");
++    }
++
++    if (!clock_mask) {
++        for (;;) {
++            PRINTF("\n\rHour (from 00 to 11): ");
++            val = APP_GetInputDecimals();
++            if (0x0B >= val) {
++                rtc.hour = val;
++                break;
++            } else
++                PRINTF("\n\rInvalid information, enter again");
++        }
++    } else {
++        for (;;) {
++            PRINTF("\n\rHour (from 00 to 23): ");
++            val = APP_GetInputDecimals();
++            if (0x17 >= val) {
++                rtc.hour = val;
++                break;
++            } else
++                PRINTF("\n\rInvalid information, enter again");
++        }
++        rtc.hour += H12_24;
++    }
++
++    for (;;) {
++        PRINTF("\n\rMinutes (from 00 to 59): ");
++        val = APP_GetInputDecimals();
++        if (0x3B >= val) {
++            rtc.min = val;
++            break;
++        } else
++            PRINTF("\n\rInvalid information, enter again");
++    }
++
++    for (;;) {
++        PRINTF("\n\rSeconds (from 00 to 59): ");
++        val = APP_GetInputDecimals();
++        if (0x3B >= val) {
++            rtc.sec = val;
++            break;
++        } else
++            PRINTF("\n\rInvalid information, enter again");
++    }
++
++    BD70528_RTC_SetTime(&bd70528Handle, rtc);
++    PRINTF("\n\r");
++    BD70528_RTC_ReadTime(&bd70528Handle);
++}
++
++void APP_SRTM_ReadRTC(void)
++{
++    BD70528_RTC_ReadTime(&bd70528Handle);
++}
++
++void APP_SRTM_SetRTCAlarm()
++{
++    rtc_time_t rtc = {0};
++
++    uint8_t val;
++
++    PRINTF("\n\rSetting RTC Alarm");
++
++    for (;;) {
++        PRINTF("\n\rSet ONESEC Alarm? (0 No, 1 Yes): ");
++        val = APP_GetInputDecimals();
++        if (0x01 >= val) {
++            if (val)
++                rtc.repeat = val;
++            break;
++        } else
++            PRINTF("\n\rInvalid information, enter again");
++    }
++
++    for (;;) {
++        PRINTF("\n\rSet ONEMIN Alarm? (0 No, 1 Yes): ");
++        val = APP_GetInputDecimals();
++        if (0x01 >= val) {
++            if (val)
++                rtc.repeat |= ALM_ONEMIN;
++            break;
++        } else
++            PRINTF("\n\rInvalid information, enter again");
++    }
++
++    BD70528_RTC_SetAlarm(&bd70528Handle, rtc);
++    PRINTF("\n\r");
++    BD70528_RTC_ReadAlarm(&bd70528Handle);
++}
++
++void APP_SRTM_ReadRTCAlarm(void)
++{
++    BD70528_RTC_ReadAlarm(&bd70528Handle);
++}
++
+ static void APP_SRTM_DoSetWakeupPin(srtm_dispatcher_t dispatcher, void *param1, void *param2)
+ {
+     uint16_t ioId = (uint32_t)param1;
+diff --git a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.h b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.h
+index eb02a82..524d46b 100644
+--- a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.h
++++ b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/app_srtm.h
+@@ -144,6 +144,14 @@ void APP_SRTM_SetRpmsgMonitor(app_rpmsg_monitor_t monitor, void *param);
+ /* Set SNVS IRQ handler for application */
+ void APP_SRTM_SetIRQHandler(app_irq_handler_t handler, void *param);
+ 
++void APP_SRTM_SetRTC(void);
++
++void APP_SRTM_ReadRTC(void);
++
++void APP_SRTM_SetRTCAlarm(void);
++
++void APP_SRTM_ReadRTCAlarm(void);
++
+ /* Get SRTM RPMsg handle */
+ struct rpmsg_lite_instance *APP_SRTM_GetRPMsgHandle(void);
+ 
+diff --git a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/power_mode_switch.c b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/power_mode_switch.c
+index e185398..20dc4b4 100644
+--- a/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/power_mode_switch.c
++++ b/boards/evkmcimx7ulp/demo_apps/rohm_power_mode_switch/power_mode_switch.c
+@@ -683,6 +683,26 @@ static void APP_DumpPmicRegister(void)
+     GETCHAR();
+ }
+ 
++void APP_SetPmicRtc(void)
++{
++    APP_SRTM_SetRTC();
++}
++
++void APP_ReadPmicRtc(void)
++{
++    APP_SRTM_ReadRTC();
++}
++
++void APP_SetPmicRtcAlarm(void)
++{
++    APP_SRTM_SetRTCAlarm();
++}
++
++void APP_ReadPmicRtcAlarm(void)
++{
++    APP_SRTM_ReadRTCAlarm();
++}
++
+ static void APP_SetPmicRegister(void)
+ {
+     uint8_t reg;
+@@ -804,6 +824,10 @@ void PowerModeSwitchTask(void *pvParameters)
+         PRINTF("Press  R for read BD70528 Register.\r\n");
+         PRINTF("Press  X for dump all BD70528 Registers.\r\n");
+         PRINTF("Press  S for set BD70528 Register.\r\n");
++        PRINTF("Press  K for set BD70528 RTC timer.\r\n");
++        PRINTF("Press  L for read BD70528 RTC timer.\r\n");
++        PRINTF("Press  M for set BD70528 RTC alarm.\r\n");
++        PRINTF("Press  N for read BD70528 RTC alarm.\r\n");
+         PRINTF("\r\nWaiting for power mode select..\r\n\r\n");
+ 
+         /* Wait for user response */
+@@ -905,6 +929,22 @@ void PowerModeSwitchTask(void *pvParameters)
+         {
+             APP_SetPmicRegister();
+         }
++        else if ('K' == ch)
++        {
++            APP_SetPmicRtc();
++        }
++        else if ('L' == ch)
++        {
++            APP_ReadPmicRtc();
++        }
++        else if ('M' == ch)
++        {
++            APP_SetPmicRtcAlarm();
++        }
++        else if ('N' == ch)
++        {
++            APP_ReadPmicRtcAlarm();
++        }
+         else
+         {
+             PRINTF("Invalid command %c[0x%x]\r\n", ch, ch);
+-- 
+2.17.1
+

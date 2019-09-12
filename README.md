@@ -5,10 +5,18 @@
 4. Apply the patches in numerical order:
 
     `git apply 0001-bd70528-Add-driver.patch`
-    
-	`git apply 0002-power_mode_switch-Add-application-for-Rohm-PMIC.patch`
-    
-	`git apply 0003-ea_ucom.patch`
+	
+    `git apply 0002-power_mode_switch-Add-application-for-Rohm-PMIC.patch`
+	
+    `git apply 0003-bd70528-Add-RTC-Read-functions.patch`
+	
+    `git apply 0004-bd70528-Add-RTC-Write-functions.patch`
+	
+    `git apply 0005-app-Add-PMIC-RTC-application-code.patch`
+	
+    `git apply 0100-ea_ucom.patch`
+	
+    `git apply 0101-fix_iar_warning.patch`
 	
 # Compile
 1. Double-click boards\evkmcimx7ulp\demo_apps\rohm_power_mode_switch\iar\power_mode_switch.eww
