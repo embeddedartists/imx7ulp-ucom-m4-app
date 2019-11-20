@@ -16,8 +16,6 @@
 	
     `git apply 0100-ea_ucom.patch`
 	
-    `git apply 0101-fix_iar_warning.patch`
-	
 # Compile
 1. Double-click boards\evkmcimx7ulp\demo_apps\rohm_power_mode_switch\iar\power_mode_switch.eww
 2. Build
