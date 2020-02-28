@@ -1,6 +1,6 @@
 # Software for the M4 core of the i.MX7 ULP uCOM
 1. Clone this repository
-2. Download the SDK (SDK_2.6.0_EVK-MCIMX7ULP.zip) from [Welcome | MCUXpresso SDK Builder](https://mcuxpresso.nxp.com/en/welcome)
+2. Download the SDK (SDK_2.6.0_EVK-MCIMX7ULP.zip) from [Welcome | MCUXpresso SDK Builder](https://mcuxpresso.nxp.com/en/welcome). **It MUST be 2.6.0 as later versions are incompatible with the patches**
 3. Unpack the SDK into the cloned repository
 4. Apply the patches in numerical order:
 
